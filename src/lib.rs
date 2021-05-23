@@ -131,6 +131,8 @@ use crate::{
     },
 };
 
+use pallet_mmr_rpc::LeafProof;
+
 /// ClientBuilder for constructing a Client.
 #[derive(Default)]
 pub struct ClientBuilder<T: Runtime> {
@@ -518,6 +520,27 @@ impl<T: Runtime> Client<T> {
     ) -> Result<Subscription<T::Header>, Error> {
         let headers = self.rpc.subscribe_finalized_blocks().await?;
         Ok(headers)
+    }
+
+    /// Subscribe to justifications.
+    pub async fn subscribe_justifications(
+        &self,
+    ) -> Result<Subscription<beefy_gadget_rpc::notification::SignedCommitment>, Error> {
+        let headers = self.rpc.subscribe_justifications().await?;
+        Ok(headers)
+    }
+
+    /// Generate MMR proof for given leaf index.
+    pub async fn generate_proof<H>(
+        &self,
+        key: u64,
+        hash: Option<H>,
+    ) -> Result<LeafProof<T::Hash>, Error>
+    where
+        H: Into<T::Hash> + 'static,
+    {
+        let proof = self.rpc.generate_proof(key, hash.map(|h| h.into())).await?;
+        Ok(proof)
     }
 
     /// Encodes a call.
