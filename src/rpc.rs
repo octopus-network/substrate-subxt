@@ -68,6 +68,7 @@ use sp_runtime::{
     traits::Hash,
 };
 use sp_version::RuntimeVersion;
+use pallet_mmr_rpc::LeafProof;
 
 use crate::{
     error::Error,
@@ -492,6 +493,32 @@ impl<T: Runtime> Rpc<T> {
             )
             .await?;
         Ok(subscription)
+    }
+
+    /// Subscribe to justifications.
+    pub async fn subscribe_justifications(
+        &self,
+    ) -> Result<Subscription<beefy_gadget_rpc::notification::SignedCommitment>, Error> {
+        let subscription = self
+            .client
+            .subscribe(
+                "beefy_subscribeJustifications",
+                &[],
+                "beefy_unsubscribeJustifications",
+            )
+            .await?;
+        Ok(subscription)
+    }
+
+    /// Generate MMR proof for given leaf index.
+    pub async fn generate_proof(
+        &self,
+        key: u64,
+        hash: Option<T::Hash>,
+    ) -> Result<LeafProof<T::Hash>, Error> {
+        let params = &[to_json_value(key)?, to_json_value(hash)?];
+        let proof = self.client.request("mmr_generateProof", params).await?;
+        Ok(proof)
     }
 
     /// Create and submit an extrinsic and return corresponding Hash if successful

@@ -55,6 +55,9 @@ frame-support = "3.0.0"
 pallet-indices = "3.0.0"
 pallet-staking = "3.0.0"
 
+pallet-mmr-rpc = "3.0.0"
+beefy-gadget-rpc = { git = "https://github.com/octopus-network/grandpa-bridge-gadget", branch = "octopus" }
+
 [dev-dependencies]
 assert_matches = "1.5.0"
 async-std = { version = "1.9.0", features = ["attributes", "tokio1"] }
