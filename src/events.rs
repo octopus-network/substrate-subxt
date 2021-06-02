@@ -137,14 +137,20 @@ impl<T: Runtime + System> EventsDecoder<T> {
         let compact_len = <Compact<u32>>::decode(input)?;
         let len = compact_len.0 as usize;
 
+        log::debug!("compact_len: {}", len);
         let mut r = Vec::new();
-        for _ in 0..len {
+        for i in 0..len {
+            log::debug!("index: {}", i);
             // decode EventRecord
             let phase = Phase::decode(input)?;
+            log::debug!("phase: {:?}", phase);
             let module_variant = input.read_byte()?;
+            log::debug!("module_variant: {}", module_variant);
 
             let module = self.metadata.module_with_events(module_variant)?;
+            log::debug!("module: {:?}", module);
             let event_variant = input.read_byte()?;
+            log::debug!("event_variant: {}", event_variant);
             let event_metadata = module.event(event_variant)?;
 
             log::debug!(
