@@ -634,8 +634,12 @@ fn convert_event(
     let name = convert(event.name)?;
     let mut arguments = Vec::new();
     for arg in convert(event.arguments)? {
-        let arg = arg.parse::<EventArg>()?;
-        arguments.push(arg);
+        if name == "Burned" && arg == "Balance" {
+            arguments.push(EventArg::Primitive("TAssetBalance".to_string()));
+        } else {
+            let arg = arg.parse::<EventArg>()?;
+            arguments.push(arg);
+        }
     }
     Ok(ModuleEventMetadata { name, arguments })
 }
