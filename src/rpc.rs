@@ -55,7 +55,9 @@ use sp_core::{
         StorageKey,
     },
     Bytes,
+    offchain::StorageKind,
 };
+
 use sp_rpc::{
     list::ListOrValue,
     number::NumberOrHex,
@@ -519,6 +521,16 @@ impl<T: Runtime> Rpc<T> {
         let params = &[to_json_value(key)?, to_json_value(hash)?];
         let proof = self.client.request("mmr_generateProof", params).await?;
         Ok(proof)
+    }
+
+    pub async fn local_storage_get(
+        &self,
+        kind: StorageKind,
+        key: Bytes,
+    ) -> Result<Option<Bytes>, Error> {
+        let params = &[to_json_value(kind)?, to_json_value(key)?];
+        let data = self.client.request("offchain_localStorageGet", params).await?;
+        Ok(data)
     }
 
     /// Create and submit an extrinsic and return corresponding Hash if successful

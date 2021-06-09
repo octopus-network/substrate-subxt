@@ -63,6 +63,7 @@ use sp_core::{
         StorageKey,
     },
     Bytes,
+    offchain::StorageKind,
 };
 pub use sp_runtime::traits::SignedExtension;
 pub use sp_version::RuntimeVersion;
@@ -541,6 +542,16 @@ impl<T: Runtime> Client<T> {
     {
         let proof = self.rpc.generate_proof(key, hash.map(|h| h.into())).await?;
         Ok(proof)
+    }
+
+    /// Get offchain local storage under given key and prefix.
+    pub async fn local_storage_get(
+        &self,
+        kind: StorageKind,
+        key: Bytes,
+    ) -> Result<Option<Bytes>, Error> {
+        let data = self.rpc.local_storage_get(kind, key).await?;
+        Ok(data)
     }
 
     /// Encodes a call.

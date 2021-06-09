@@ -55,7 +55,7 @@ frame-support = "3.0.0"
 pallet-indices = "3.0.0"
 pallet-staking = "3.0.0"
 
-pallet-mmr-rpc = "3.0.0"
+pallet-mmr-rpc = { git = 'https://github.com/octopus-network/substrate.git', branch = 'polkadot-v0.9.5' }
 beefy-gadget-rpc = { git = "https://github.com/octopus-network/grandpa-bridge-gadget", branch = "octopus" }
 
 [dev-dependencies]
