@@ -24,7 +24,7 @@ tokio02 = ["jsonrpsee-http-client/tokio02", "jsonrpsee-ws-client/tokio02"]
 tokio1 = ["jsonrpsee-http-client/tokio1", "jsonrpsee-ws-client/tokio1"]
 
 [dependencies]
-async-trait = "0.1.49"
+async-trait = "0.1.48"
 codec = { package = "parity-scale-codec", version = "2.1", default-features = false, features = ["derive", "full"] }
 dyn-clone = "1.0.4"
 futures = "0.3.13"
