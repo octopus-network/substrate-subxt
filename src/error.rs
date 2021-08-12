@@ -16,10 +16,7 @@
 
 use jsonrpsee_ws_client::Error as RequestError;
 use sp_core::crypto::SecretStringError;
-use sp_runtime::{
-    transaction_validity::TransactionValidityError,
-    DispatchError,
-};
+use sp_runtime::{transaction_validity::TransactionValidityError, DispatchError, TokenError, ArithmeticError};
 use thiserror::Error;
 
 use crate::metadata::{
@@ -114,6 +111,12 @@ pub enum RuntimeError {
     /// Other error.
     #[error("Other error: {0}")]
     Other(String),
+    /// token error.
+    #[error("token error: {0}")]
+    Token(&'static str),
+    /// An arithmetic error.
+    #[error("arithmetic error: {0}")]
+    Arithmetic(&'static str),
 }
 
 impl RuntimeError {
@@ -140,6 +143,8 @@ impl RuntimeError {
             DispatchError::ConsumerRemaining => Ok(Self::ConsumerRemaining),
             DispatchError::NoProviders => Ok(Self::NoProviders),
             DispatchError::Other(msg) => Ok(Self::Other(msg.into())),
+            DispatchError::Token(msg) => Ok(Self::Token(msg.into())),
+            DispatchError::Arithmetic(msg) => Ok(Self::Arithmetic(msg.into())),
         }
     }
 }
