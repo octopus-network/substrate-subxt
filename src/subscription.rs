@@ -1,5 +1,5 @@
 // Copyright 2019-2021 Parity Technologies (UK) Ltd.
-// This file is part of substrate-subxt.
+// This file is part of subxt.
 //
 // subxt is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -12,7 +12,7 @@
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with substrate-subxt.  If not, see <http://www.gnu.org/licenses/>.
+// along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
 use jsonrpsee_types::{
     DeserializeOwned,
@@ -35,35 +35,69 @@ use crate::{
         Raw,
         RawEvent,
     },
-    frame::{
-        system::Phase,
-        Event,
-    },
     rpc::Rpc,
-    runtimes::Runtime,
+    Config,
+    Event,
+    Phase,
 };
 
 /// Event subscription simplifies filtering a storage change set stream for
 /// events of interest.
-pub struct EventSubscription<'a, T: Runtime> {
-    subscription: EventStorageSubscription<T>,
-    decoder: &'a EventsDecoder<T>,
+pub struct EventSubscription<'a, T: Config> {
+    block_reader: BlockReader<'a, T>,
     block: Option<T::Hash>,
     extrinsic: Option<usize>,
     event: Option<(&'static str, &'static str)>,
-    events: VecDeque<RawEvent>,
+    events: VecDeque<Raw>,
     finished: bool,
 }
 
-impl<'a, T: Runtime> EventSubscription<'a, T> {
+enum BlockReader<'a, T: Config> {
+    Decoder {
+        subscription: EventStorageSubscription<T>,
+        decoder: &'a EventsDecoder<T>,
+    },
+    /// Mock event listener for unit tests
+    #[cfg(test)]
+    Mock(Box<dyn Iterator<Item = (T::Hash, Result<Vec<(Phase, Raw)>, Error>)>>),
+}
+
+impl<'a, T: Config> BlockReader<'a, T> {
+    async fn next(&mut self) -> Option<(T::Hash, Result<Vec<(Phase, Raw)>, Error>)> {
+        match self {
+            BlockReader::Decoder {
+                subscription,
+                decoder,
+            } => {
+                let change_set = subscription.next().await?;
+                let events: Result<Vec<_>, _> = change_set
+                    .changes
+                    .into_iter()
+                    .filter_map(|(_key, change)| {
+                        Some(decoder.decode_events(&mut change?.0.as_slice()))
+                    })
+                    .collect();
+
+                let flattened_events = events.map(|x| x.into_iter().flatten().collect());
+                Some((change_set.block, flattened_events))
+            }
+            #[cfg(test)]
+            BlockReader::Mock(it) => it.next(),
+        }
+    }
+}
+
+impl<'a, T: Config> EventSubscription<'a, T> {
     /// Creates a new event subscription.
     pub fn new(
         subscription: EventStorageSubscription<T>,
         decoder: &'a EventsDecoder<T>,
     ) -> Self {
         Self {
-            subscription,
-            decoder,
+            block_reader: BlockReader::Decoder {
+                subscription,
+                decoder,
+            },
             block: None,
             extrinsic: None,
             event: None,
@@ -84,52 +118,50 @@ impl<'a, T: Runtime> EventSubscription<'a, T> {
     }
 
     /// Filters events by type.
-    pub fn filter_event<E: Event<T>>(&mut self) {
-        self.event = Some((E::MODULE, E::EVENT));
+    pub fn filter_event<E: Event>(&mut self) {
+        self.event = Some((E::PALLET, E::EVENT));
     }
 
     /// Gets the next event.
     pub async fn next(&mut self) -> Option<Result<RawEvent, Error>> {
         loop {
-            if let Some(event) = self.events.pop_front() {
-                return Some(Ok(event))
+            if let Some(raw_event) = self.events.pop_front() {
+                match raw_event {
+                    Raw::Event(event) => return Some(Ok(event)),
+                    Raw::Error(err) => return Some(Err(err.into())),
+                };
             }
             if self.finished {
                 return None
             }
             // always return None if subscription has closed
-            let change_set = self.subscription.next().await?;
+            let (received_hash, events) = self.block_reader.next().await?;
             if let Some(hash) = self.block.as_ref() {
-                if &change_set.block == hash {
+                if &received_hash == hash {
                     self.finished = true;
                 } else {
                     continue
                 }
             }
-            for (_key, data) in change_set.changes {
-                if let Some(data) = data {
-                    let raw_events = match self.decoder.decode_events(&mut &data.0[..]) {
-                        Ok(events) => events,
-                        Err(error) => return Some(Err(error)),
-                    };
+
+            match events {
+                Err(err) => return Some(Err(err)),
+                Ok(raw_events) => {
                     for (phase, raw) in raw_events {
-                        if let Phase::ApplyExtrinsic(i) = phase {
-                            if let Some(ext_index) = self.extrinsic {
-                                if i as usize != ext_index {
-                                    continue
-                                }
+                        if let Some(ext_index) = self.extrinsic {
+                            if !matches!(phase, Phase::ApplyExtrinsic(i) if i as usize == ext_index)
+                            {
+                                continue
                             }
-                            let event = match raw {
-                                Raw::Event(event) => event,
-                                Raw::Error(err) => return Some(Err(err.into())),
-                            };
-                            if let Some((module, variant)) = self.event {
-                                if event.module != module || event.variant != variant {
-                                    continue
-                                }
-                            }
-                            self.events.push_back(event);
                         }
+                        if let Some((module, variant)) = self.event {
+                            if let Raw::Event(ref event) = raw {
+                                if event.pallet != module || event.variant != variant {
+                                    continue
+                                }
+                            }
+                        }
+                        self.events.push_back(raw);
                     }
                 }
             }
@@ -155,14 +187,14 @@ impl From<SystemEvents> for StorageKey {
 }
 
 /// Event subscription to only fetch finalized storage changes.
-pub struct FinalizedEventStorageSubscription<T: Runtime> {
+pub struct FinalizedEventStorageSubscription<T: Config> {
     rpc: Rpc<T>,
     subscription: Subscription<T::Header>,
     storage_changes: VecDeque<StorageChangeSet<T::Hash>>,
     storage_key: StorageKey,
 }
 
-impl<T: Runtime> FinalizedEventStorageSubscription<T> {
+impl<T: Config> FinalizedEventStorageSubscription<T> {
     /// Creates a new finalized event storage subscription.
     pub fn new(rpc: Rpc<T>, subscription: Subscription<T::Header>) -> Self {
         Self {
@@ -193,14 +225,14 @@ impl<T: Runtime> FinalizedEventStorageSubscription<T> {
 }
 
 /// Wrapper over imported and finalized event subscriptions.
-pub enum EventStorageSubscription<T: Runtime> {
+pub enum EventStorageSubscription<T: Config> {
     /// Events that are InBlock
     Imported(Subscription<StorageChangeSet<T::Hash>>),
     /// Events that are Finalized
     Finalized(FinalizedEventStorageSubscription<T>),
 }
 
-impl<T: Runtime> EventStorageSubscription<T> {
+impl<T: Config> EventStorageSubscription<T> {
     /// Gets the next change_set from the subscription.
     pub async fn next(&mut self) -> Option<StorageChangeSet<T::Hash>> {
         match self {
@@ -226,6 +258,169 @@ where
         Err(e) => {
             log::error!("Subscription {} failed: {:?} dropping", sub_name, e);
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::RuntimeError;
+
+    use super::*;
+    use sp_core::H256;
+    #[derive(Clone)]
+    struct MockConfig;
+
+    impl Config for MockConfig {
+        type Index = u32;
+        type BlockNumber = u32;
+        type Hash = sp_core::H256;
+        type Hashing = sp_runtime::traits::BlakeTwo256;
+        type AccountId = sp_runtime::AccountId32;
+        type Address = sp_runtime::MultiAddress<Self::AccountId, u32>;
+        type Header = sp_runtime::generic::Header<
+            Self::BlockNumber,
+            sp_runtime::traits::BlakeTwo256,
+        >;
+        type Signature = sp_runtime::MultiSignature;
+        type Extrinsic = sp_runtime::OpaqueExtrinsic;
+    }
+
+    fn named_event(event_name: &str) -> RawEvent {
+        RawEvent {
+            data: sp_core::Bytes::from(Vec::new()),
+            pallet: event_name.to_string(),
+            variant: event_name.to_string(),
+            pallet_index: 0,
+            variant_index: 0,
+        }
+    }
+
+    fn raw_event(id: u8) -> RawEvent {
+        RawEvent {
+            data: sp_core::Bytes::from(Vec::new()),
+            pallet: "SomePallet".to_string(),
+            variant: "SomeVariant".to_string(),
+            pallet_index: id,
+            variant_index: id,
+        }
+    }
+
+    fn event(id: u8) -> Raw {
+        Raw::Event(raw_event(id))
+    }
+
+    #[async_std::test]
+    async fn test_error_does_not_stop_subscription() {
+        let mut subscription: EventSubscription<MockConfig> = EventSubscription {
+            block_reader: BlockReader::Mock(Box::new(
+                vec![(
+                    H256::from([0; 32]),
+                    Ok(vec![
+                        (
+                            Phase::ApplyExtrinsic(0),
+                            Raw::Error(RuntimeError::BadOrigin),
+                        ),
+                        (Phase::ApplyExtrinsic(0), event(1)),
+                    ]),
+                )]
+                .into_iter(),
+            )),
+            block: None,
+            extrinsic: None,
+            event: None,
+            events: Default::default(),
+            finished: false,
+        };
+
+        assert!(matches!(
+            subscription.next().await.unwrap().unwrap_err(),
+            Error::Runtime(RuntimeError::BadOrigin)
+        ));
+        assert_eq!(subscription.next().await.unwrap().unwrap(), raw_event(1));
+        assert!(subscription.next().await.is_none());
+    }
+
+    #[async_std::test]
+    /// test that filters work correctly, and are independent of each other
+    async fn test_filters() {
+        let mut events = vec![];
+        // create all events
+        for block_hash in [H256::from([0; 32]), H256::from([1; 32])] {
+            for phase in [
+                Phase::Initialization,
+                Phase::ApplyExtrinsic(0),
+                Phase::ApplyExtrinsic(1),
+                Phase::Finalization,
+            ] {
+                for event in [named_event("a"), named_event("b")] {
+                    events.push((block_hash, phase.clone(), event))
+                }
+            }
+        }
+        // set variant index so we can uniquely identify the event
+        events.iter_mut().enumerate().for_each(|(idx, event)| {
+            event.2.variant_index = idx as u8;
+        });
+
+        let half_len = events.len() / 2;
+
+        for block_filter in [None, Some(H256::from([1; 32]))] {
+            for extrinsic_filter in [None, Some(1)] {
+                for event_filter in [None, Some(("b", "b"))] {
+                    let mut subscription: EventSubscription<MockConfig> =
+                        EventSubscription {
+                            block_reader: BlockReader::Mock(Box::new(
+                                vec![
+                                    (
+                                        events[0].0,
+                                        Ok(events
+                                            .iter()
+                                            .take(half_len)
+                                            .map(|(_, phase, event)| {
+                                                (phase.clone(), Raw::Event(event.clone()))
+                                            })
+                                            .collect()),
+                                    ),
+                                    (
+                                        events[half_len].0,
+                                        Ok(events
+                                            .iter()
+                                            .skip(half_len)
+                                            .map(|(_, phase, event)| {
+                                                (phase.clone(), Raw::Event(event.clone()))
+                                            })
+                                            .collect()),
+                                    ),
+                                ]
+                                .into_iter(),
+                            )),
+                            block: block_filter,
+                            extrinsic: extrinsic_filter,
+                            event: event_filter,
+                            events: Default::default(),
+                            finished: false,
+                        };
+                    let mut expected_events = events.clone();
+                    if let Some(hash) = block_filter {
+                        expected_events.retain(|(h, _, _)| h == &hash);
+                    }
+                    if let Some(idx) = extrinsic_filter {
+                        expected_events.retain(|(_, phase, _)| matches!(phase, Phase::ApplyExtrinsic(i) if *i as usize == idx));
+                    }
+                    if let Some(name) = event_filter {
+                        expected_events.retain(|(_, _, event)| event.pallet == name.0);
+                    }
+
+                    for expected_event in expected_events {
+                        assert_eq!(
+                            subscription.next().await.unwrap().unwrap(),
+                            expected_event.2
+                        );
+                    }
+                    assert!(subscription.next().await.is_none());
+                }
+            }
         }
     }
 }
