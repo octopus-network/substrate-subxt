@@ -14,24 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::{
-    SignedExtra,
-    StorageEntry,
-};
-use codec::{
-    Codec,
-    Encode,
-    EncodeLike,
-};
+use crate::{SignedExtra, StorageEntry};
+use codec::{Codec, Encode, EncodeLike};
 use core::fmt::Debug;
 use sp_runtime::traits::{
-    AtLeast32Bit,
-    Extrinsic,
-    Hash,
-    Header,
-    MaybeSerializeDeserialize,
-    Member,
-    Verify,
+    AtLeast32Bit, Extrinsic, Hash, Header, MaybeSerializeDeserialize, Member, Verify,
 };
 
 /// Runtime types.

@@ -14,15 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
-use jsonrpsee_types::{
-    DeserializeOwned,
-    Subscription,
-};
+use jsonrpsee_types::{DeserializeOwned, Subscription};
 use sp_core::{
-    storage::{
-        StorageChangeSet,
-        StorageKey,
-    },
+    storage::{StorageChangeSet, StorageKey},
     twox_128,
 };
 use sp_runtime::traits::Header;
@@ -30,15 +24,9 @@ use std::collections::VecDeque;
 
 use crate::{
     error::Error,
-    events::{
-        EventsDecoder,
-        Raw,
-        RawEvent,
-    },
-    rpc::Rpc,
-    Config,
-    Event,
-    Phase,
+    events::{EventsDecoder, Raw, RawEvent},
+    rpc::{Rpc, SignedCommitment},
+    Config, Event, Phase,
 };
 
 /// Event subscription simplifies filtering a storage change set stream for
@@ -132,7 +120,7 @@ impl<'a, T: Config> EventSubscription<'a, T> {
                 };
             }
             if self.finished {
-                return None
+                return None;
             }
             // always return None if subscription has closed
             let (received_hash, events) = self.block_reader.next().await?;
@@ -140,7 +128,7 @@ impl<'a, T: Config> EventSubscription<'a, T> {
                 if &received_hash == hash {
                     self.finished = true;
                 } else {
-                    continue
+                    continue;
                 }
             }
 
@@ -151,13 +139,13 @@ impl<'a, T: Config> EventSubscription<'a, T> {
                         if let Some(ext_index) = self.extrinsic {
                             if !matches!(phase, Phase::ApplyExtrinsic(i) if i as usize == ext_index)
                             {
-                                continue
+                                continue;
                             }
                         }
                         if let Some((module, variant)) = self.event {
                             if let Raw::Event(ref event) = raw {
                                 if event.pallet != module || event.variant != variant {
-                                    continue
+                                    continue;
                                 }
                             }
                         }
@@ -209,7 +197,7 @@ impl<T: Config> FinalizedEventStorageSubscription<T> {
     pub async fn next(&mut self) -> Option<StorageChangeSet<T::Hash>> {
         loop {
             if let Some(storage_change) = self.storage_changes.pop_front() {
-                return Some(storage_change)
+                return Some(storage_change);
             }
             let header: T::Header =
                 read_subscription_response("HeaderSubscription", &mut self.subscription)
@@ -242,6 +230,23 @@ impl<T: Config> EventStorageSubscription<T> {
             }
             Self::Finalized(event_sub) => event_sub.next().await,
         }
+    }
+}
+
+/// Beefy justification subscription
+pub struct BeefySubscription {
+    subscription: Subscription<SignedCommitment>,
+}
+
+impl BeefySubscription {
+    /// Creates a new beefy justification subscription.
+    pub fn new(subscription: Subscription<SignedCommitment>) -> Self {
+        Self { subscription }
+    }
+
+    /// Gets the next signed commitment.
+    pub async fn next(&mut self) -> Option<SignedCommitment> {
+        read_subscription_response("BeefySubscription", &mut self.subscription).await
     }
 }
 

@@ -49,15 +49,8 @@ pub use sp_arithmetic;
 pub use sp_core;
 pub use sp_runtime;
 
-use codec::{
-    Decode,
-    DecodeAll,
-    Encode,
-};
-use core::{
-    fmt::Debug,
-    marker::PhantomData,
-};
+use codec::{Decode, DecodeAll, Encode};
+use core::{fmt::Debug, marker::PhantomData};
 
 mod client;
 mod config;
@@ -70,53 +63,16 @@ pub mod storage;
 mod subscription;
 
 pub use crate::{
-    client::{
-        Client,
-        ClientBuilder,
-        SubmittableExtrinsic,
-    },
-    config::{
-        AccountData,
-        Config,
-        ExtrinsicExtraData,
-    },
-    error::{
-        Error,
-        PalletError,
-        RuntimeError,
-    },
-    events::{
-        EventsDecoder,
-        RawEvent,
-    },
-    extrinsic::{
-        DefaultExtra,
-        PairSigner,
-        SignedExtra,
-        Signer,
-        UncheckedExtrinsic,
-    },
-    metadata::{
-        Metadata,
-        MetadataError,
-        PalletMetadata,
-    },
-    rpc::{
-        BlockNumber,
-        ExtrinsicSuccess,
-        ReadProof,
-        RpcClient,
-        SystemProperties,
-    },
-    storage::{
-        KeyIter,
-        StorageEntry,
-        StorageEntryKey,
-        StorageMapKey,
-    },
+    client::{Client, ClientBuilder, SubmittableExtrinsic},
+    config::{AccountData, Config, ExtrinsicExtraData},
+    error::{Error, PalletError, RuntimeError},
+    events::{EventsDecoder, RawEvent},
+    extrinsic::{DefaultExtra, PairSigner, SignedExtra, Signer, UncheckedExtrinsic},
+    metadata::{Metadata, MetadataError, PalletMetadata},
+    rpc::{BlockNumber, ExtrinsicSuccess, ReadProof, RpcClient, SystemProperties,SignedCommitment},
+    storage::{KeyIter, StorageEntry, StorageEntryKey, StorageMapKey},
     subscription::{
-        EventStorageSubscription,
-        EventSubscription,
+        BeefySubscription, EventStorageSubscription, EventSubscription,
         FinalizedEventStorageSubscription,
     },
 };

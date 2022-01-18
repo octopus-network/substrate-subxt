@@ -23,73 +23,36 @@
 
 use std::sync::Arc;
 
-use codec::{
-    Decode,
-    Encode,
-    Error as CodecError,
-};
-use core::{
-    convert::TryInto,
-    marker::PhantomData,
-};
+use codec::{Decode, Encode, Error as CodecError};
+use core::{convert::TryInto, marker::PhantomData};
 use frame_metadata::RuntimeMetadataPrefixed;
-use jsonrpsee_http_client::{
-    HttpClient,
-    HttpClientBuilder,
-};
+use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee_types::{
     to_json_value,
-    traits::{
-        Client,
-        SubscriptionClient,
-    },
-    DeserializeOwned,
-    Error as RpcError,
-    JsonValue,
-    Subscription,
+    traits::{Client, SubscriptionClient},
+    DeserializeOwned, Error as RpcError, JsonValue, Subscription,
 };
-use jsonrpsee_ws_client::{
-    WsClient,
-    WsClientBuilder,
-};
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use jsonrpsee_ws_client::{WsClient, WsClientBuilder};
+use serde::{Deserialize, Serialize};
 use sp_core::{
-    storage::{
-        StorageChangeSet,
-        StorageData,
-        StorageKey,
-    },
-    Bytes,
-    U256,
+    storage::{StorageChangeSet, StorageData, StorageKey},
+    Bytes, U256,
 };
 use sp_runtime::{
-    generic::{
-        Block,
-        SignedBlock,
-    },
+    generic::{Block, SignedBlock},
     traits::Hash,
 };
 use sp_version::RuntimeVersion;
 
 use crate::{
     error::Error,
-    events::{
-        EventsDecoder,
-        RawEvent,
-    },
+    events::{EventsDecoder, RawEvent},
     storage::StorageKeyPrefix,
     subscription::{
-        EventStorageSubscription,
-        EventSubscription,
-        FinalizedEventStorageSubscription,
+        EventStorageSubscription, EventSubscription, FinalizedEventStorageSubscription,
         SystemEvents,
     },
-    Config,
-    Event,
-    Metadata,
+    Config, Event, Metadata,
 };
 
 /// A number type that can be serialized both as a number or a string that encodes a number in a
@@ -184,6 +147,12 @@ pub enum TransactionStatus<Hash, BlockHash> {
     Invalid,
 }
 
+/// An encoded signed commitment proving that the given header has been finalized.
+/// The given bytes should be the SCALE-encoded representation of a
+/// `beefy_primitives::SignedCommitment`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SignedCommitment(pub sp_core::Bytes);
+
 /// Rpc client wrapper.
 /// This is workaround because adding generic types causes the macros to fail.
 #[derive(Clone)]
@@ -240,18 +209,14 @@ impl RpcClient {
     ) -> Result<Subscription<T>, Error> {
         let params = Some(params.into());
         match self {
-            Self::WebSocket(inner) => {
-                inner
-                    .subscribe(subscribe_method, params, unsubscribe_method)
-                    .await
-                    .map_err(Into::into)
-            }
-            Self::Http(_) => {
-                Err(RpcError::Custom(
-                    "Subscriptions not supported on HTTP transport".to_owned(),
-                )
-                .into())
-            }
+            Self::WebSocket(inner) => inner
+                .subscribe(subscribe_method, params, unsubscribe_method)
+                .await
+                .map_err(Into::into),
+            Self::Http(_) => Err(RpcError::Custom(
+                "Subscriptions not supported on HTTP transport".to_owned(),
+            )
+            .into()),
         }
     }
 }
@@ -535,6 +500,21 @@ impl<T: Config> Rpc<T> {
         Ok(subscription)
     }
 
+    /// Subscribe to beefy justifications.
+    pub async fn subscribe_beefy_justifications(
+        &self,
+    ) -> Result<Subscription<SignedCommitment>, Error> {
+        let subscription = self
+            .client
+            .subscribe(
+                "beefy_subscribeJustifications",
+                &[],
+                "beefy_unsubscribeJustifications",
+            )
+            .await?;
+        Ok(subscription)
+    }
+
     /// Create and submit an extrinsic and return corresponding Hash if successful
     pub async fn submit_extrinsic<E: Encode>(
         &self,
@@ -595,9 +575,9 @@ impl<T: Config> Rpc<T> {
                     if self.accept_weak_inclusion {
                         return self
                             .process_block(events_sub, decoder, block_hash, ext_hash)
-                            .await
+                            .await;
                     }
-                    continue
+                    continue;
                 }
                 TransactionStatus::Invalid => return Err("Extrinsic Invalid".into()),
                 TransactionStatus::Usurped(_) => return Err("Extrinsic Usurped".into()),
@@ -606,7 +586,7 @@ impl<T: Config> Rpc<T> {
                     // read finalized blocks by default
                     return self
                         .process_block(events_sub, decoder, block_hash, ext_hash)
-                        .await
+                        .await;
                 }
                 TransactionStatus::FinalityTimeout(_) => {
                     return Err("Extrinsic FinalityTimeout".into())
