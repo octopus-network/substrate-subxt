@@ -14,9 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
-use jsonrpsee_types::{DeserializeOwned, Subscription};
+use jsonrpsee_types::{
+    DeserializeOwned, 
+    Subscription
+};
 use sp_core::{
-    storage::{StorageChangeSet, StorageKey},
+    storage::{
+        StorageChangeSet, 
+        StorageKey
+    },
     twox_128,
 };
 use sp_runtime::traits::Header;
@@ -24,9 +30,18 @@ use std::collections::VecDeque;
 
 use crate::{
     error::Error,
-    events::{EventsDecoder, Raw, RawEvent},
-    rpc::{Rpc, SignedCommitment},
-    Config, Event, Phase,
+    events::{
+        EventsDecoder, 
+        Raw, 
+        RawEvent
+    },
+    rpc::{
+        Rpc, 
+        SignedCommitment
+    },
+    Config, 
+    Event, 
+    Phase,
 };
 
 /// Event subscription simplifies filtering a storage change set stream for

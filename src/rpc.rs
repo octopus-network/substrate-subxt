@@ -23,36 +23,73 @@
 
 use std::sync::Arc;
 
-use codec::{Decode, Encode, Error as CodecError};
-use core::{convert::TryInto, marker::PhantomData};
+use codec::{
+    Decode, 
+    Encode, 
+    Error as CodecError
+};
+use core::{
+    convert::TryInto, 
+    marker::PhantomData
+};
 use frame_metadata::RuntimeMetadataPrefixed;
-use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee_http_client::{
+    HttpClient, 
+    HttpClientBuilder
+};
 use jsonrpsee_types::{
     to_json_value,
-    traits::{Client, SubscriptionClient},
-    DeserializeOwned, Error as RpcError, JsonValue, Subscription,
+    traits::{
+        Client, 
+        SubscriptionClient
+    },
+    DeserializeOwned, 
+    Error as RpcError, 
+    JsonValue, 
+    Subscription,
 };
-use jsonrpsee_ws_client::{WsClient, WsClientBuilder};
-use serde::{Deserialize, Serialize};
+use jsonrpsee_ws_client::{
+    WsClient, 
+    WsClientBuilder
+};
+use serde::{
+    Deserialize, 
+    Serialize
+};
 use sp_core::{
-    storage::{StorageChangeSet, StorageData, StorageKey},
-    Bytes, U256,
+    storage::{
+        StorageChangeSet, 
+        StorageData, 
+        StorageKey
+    },
+    Bytes, 
+    U256,
 };
 use sp_runtime::{
-    generic::{Block, SignedBlock},
+    generic::{
+        Block, 
+        SignedBlock
+    },
     traits::Hash,
 };
 use sp_version::RuntimeVersion;
 
 use crate::{
     error::Error,
-    events::{EventsDecoder, RawEvent},
+    events::{
+        EventsDecoder, 
+        RawEvent
+    },
     storage::StorageKeyPrefix,
     subscription::{
-        EventStorageSubscription, EventSubscription, FinalizedEventStorageSubscription,
+        EventStorageSubscription, 
+        EventSubscription, 
+        FinalizedEventStorageSubscription,
         SystemEvents,
     },
-    Config, Event, Metadata,
+    Config, 
+    Event, 
+    Metadata,
 };
 
 /// A number type that can be serialized both as a number or a string that encodes a number in a
