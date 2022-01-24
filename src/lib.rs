@@ -50,13 +50,13 @@ pub use sp_core;
 pub use sp_runtime;
 
 use codec::{
-    Decode,
-    DecodeAll,
-    Encode,
+    Decode, 
+    DecodeAll, 
+    Encode
 };
 use core::{
-    fmt::Debug,
-    marker::PhantomData,
+    fmt::Debug, 
+    marker::PhantomData
 };
 
 mod client;
@@ -71,51 +71,53 @@ mod subscription;
 
 pub use crate::{
     client::{
-        Client,
-        ClientBuilder,
-        SubmittableExtrinsic,
+        Client, 
+        ClientBuilder, 
+        SubmittableExtrinsic
     },
     config::{
-        AccountData,
-        Config,
-        ExtrinsicExtraData,
+        AccountData, 
+        Config, 
+        ExtrinsicExtraData
     },
     error::{
-        Error,
-        PalletError,
-        RuntimeError,
+        Error, 
+        PalletError, 
+        RuntimeError
     },
     events::{
-        EventsDecoder,
-        RawEvent,
+        EventsDecoder, 
+        RawEvent
     },
     extrinsic::{
-        DefaultExtra,
-        PairSigner,
-        SignedExtra,
-        Signer,
-        UncheckedExtrinsic,
+        DefaultExtra, 
+        PairSigner, 
+        SignedExtra, 
+        Signer, 
+        UncheckedExtrinsic
     },
     metadata::{
-        Metadata,
-        MetadataError,
-        PalletMetadata,
+        Metadata, 
+        MetadataError, 
+        PalletMetadata
     },
     rpc::{
-        BlockNumber,
-        ExtrinsicSuccess,
-        ReadProof,
-        RpcClient,
+        BlockNumber, 
+        ExtrinsicSuccess, 
+        ReadProof, 
+        RpcClient, 
         SystemProperties,
+        SignedCommitment
     },
     storage::{
-        KeyIter,
-        StorageEntry,
-        StorageEntryKey,
-        StorageMapKey,
+        KeyIter, 
+        StorageEntry, 
+        StorageEntryKey, 
+        StorageMapKey
     },
     subscription::{
-        EventStorageSubscription,
+        BeefySubscription, 
+        EventStorageSubscription, 
         EventSubscription,
         FinalizedEventStorageSubscription,
     },
