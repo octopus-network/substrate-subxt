@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
-#![allow(clippy::too_many_arguments)]
+// #![allow(clippy::too_many_arguments)]
 
-/// The SCALE encoded metadata obtained from a local run of a substrate node.
-pub static METADATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/metadata.scale"));
+// /// The SCALE encoded metadata obtained from a local run of a substrate node.
+// pub static METADATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/metadata.scale"));
 
-include!(concat!(env!("OUT_DIR"), "/runtime.rs"));
+// include!(concat!(env!("OUT_DIR"), "/runtime.rs"));

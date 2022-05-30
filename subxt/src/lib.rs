@@ -67,6 +67,7 @@ pub mod rpc;
 pub mod storage;
 mod transaction;
 pub mod updates;
+pub mod beefy;
 
 pub use crate::{
     client::{
