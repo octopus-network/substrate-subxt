@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright 2019-2022 Parity Technologies (UK) Ltd.
 // This file is part of subxt.
 //
 // subxt is free software: you can redistribute it and/or modify
@@ -28,7 +28,7 @@ use scale_info::{
     TypeDef,
     TypeDefPrimitive,
 };
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use syn::parse_quote;
 
 #[derive(Clone, Debug)]
@@ -67,13 +67,28 @@ impl TypePath {
     ///     a: Vec<Option<T>>, // the parent type param here is `T`
     /// }
     /// ```
-    pub fn parent_type_params(&self, acc: &mut HashSet<TypeParameter>) {
+    pub fn parent_type_params(&self, acc: &mut BTreeSet<TypeParameter>) {
         match self {
             Self::Parameter(type_parameter) => {
                 acc.insert(type_parameter.clone());
             }
             Self::Type(type_path) => type_path.parent_type_params(acc),
             Self::Substitute(sub) => sub.parent_type_params(acc),
+        }
+    }
+
+    /// Gets the vector type parameter if the data is represented as `TypeDef::Sequence`.
+    ///
+    /// **Note:** Utilized for transforming `std::vec::Vec<T>` into slices `&[T]` for the storage API.
+    pub fn vec_type_param(&self) -> Option<&TypePath> {
+        let ty = match self {
+            TypePath::Type(ty) => ty,
+            _ => return None,
+        };
+
+        match ty.ty.type_def() {
+            TypeDef::Sequence(_) => Some(&ty.params[0]),
+            _ => None,
         }
     }
 }
@@ -173,13 +188,13 @@ impl TypePathType {
             }
             TypeDef::Compact(_) => {
                 let compact_type = &self.params[0];
-                syn::Type::Path(parse_quote! ( #compact_type ))
+                parse_quote! ( #compact_type )
             }
             TypeDef::BitSequence(_) => {
                 let bit_order_type = &self.params[0];
                 let bit_store_type = &self.params[1];
 
-                let type_path = parse_quote! { ::subxt::bitvec::vec::BitVec<#bit_order_type, #bit_store_type> };
+                let type_path = parse_quote! { ::subxt::bitvec::vec::BitVec<#bit_store_type, #bit_order_type> };
 
                 syn::Type::Path(type_path)
             }
@@ -195,7 +210,7 @@ impl TypePathType {
     ///     a: Vec<Option<T>>, // the parent type param here is `T`
     /// }
     /// ```
-    fn parent_type_params(&self, acc: &mut HashSet<TypeParameter>) {
+    fn parent_type_params(&self, acc: &mut BTreeSet<TypeParameter>) {
         for p in &self.params {
             p.parent_type_params(acc);
         }
@@ -205,6 +220,7 @@ impl TypePathType {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TypeParameter {
     pub(super) concrete_type_id: u32,
+    pub(super) original_name: String,
     pub(super) name: proc_macro2::Ident,
 }
 
@@ -235,7 +251,7 @@ impl quote::ToTokens for TypePathSubstitute {
 }
 
 impl TypePathSubstitute {
-    fn parent_type_params(&self, acc: &mut HashSet<TypeParameter>) {
+    fn parent_type_params(&self, acc: &mut BTreeSet<TypeParameter>) {
         for p in &self.params {
             p.parent_type_params(acc);
         }

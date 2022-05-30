@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright 2019-2022 Parity Technologies (UK) Ltd.
 // This file is part of subxt.
 //
 // subxt is free software: you can redistribute it and/or modify
@@ -14,17 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
+mod composite_def;
+mod derives;
 #[cfg(test)]
 mod tests;
 mod type_def;
+mod type_def_params;
 mod type_path;
 
-use super::GeneratedTypeDerives;
 use proc_macro2::{
     Ident,
     Span,
     TokenStream,
 };
+use proc_macro_error::abort_call_site;
 use quote::{
     quote,
     ToTokens,
@@ -41,7 +44,17 @@ use std::collections::{
 };
 
 pub use self::{
+    composite_def::{
+        CompositeDef,
+        CompositeDefFieldType,
+        CompositeDefFields,
+    },
+    derives::{
+        Derives,
+        DerivesRegistry,
+    },
     type_def::TypeDefGen,
+    type_def_params::TypeDefParameters,
     type_path::{
         TypeParameter,
         TypePath,
@@ -49,6 +62,8 @@ pub use self::{
         TypePathType,
     },
 };
+
+pub type Field = scale_info::Field<PortableForm>;
 
 /// Generate a Rust module containing all types defined in the supplied [`PortableRegistry`].
 #[derive(Debug)]
@@ -60,7 +75,7 @@ pub struct TypeGenerator<'a> {
     /// User defined overrides for generated types.
     type_substitutes: HashMap<String, syn::TypePath>,
     /// Set of derives with which to annotate generated types.
-    derives: GeneratedTypeDerives,
+    derives: DerivesRegistry,
 }
 
 impl<'a> TypeGenerator<'a> {
@@ -69,7 +84,7 @@ impl<'a> TypeGenerator<'a> {
         type_registry: &'a PortableRegistry,
         root_mod: &'static str,
         type_substitutes: HashMap<String, syn::TypePath>,
-        derives: GeneratedTypeDerives,
+        derives: DerivesRegistry,
     ) -> Self {
         let root_mod_ident = Ident::new(root_mod, Span::call_site());
         Self {
@@ -81,7 +96,7 @@ impl<'a> TypeGenerator<'a> {
     }
 
     /// Generate a module containing all types defined in the supplied type registry.
-    pub fn generate_types_mod(&'a self) -> Module<'a> {
+    pub fn generate_types_mod(&self) -> Module {
         let mut root_mod =
             Module::new(self.types_mod_ident.clone(), self.types_mod_ident.clone());
 
@@ -108,7 +123,7 @@ impl<'a> TypeGenerator<'a> {
         id: u32,
         path: Vec<String>,
         root_mod_ident: &Ident,
-        module: &mut Module<'a>,
+        module: &mut Module,
     ) {
         let joined_path = path.join("::");
         if self.type_substitutes.contains_key(&joined_path) {
@@ -126,7 +141,7 @@ impl<'a> TypeGenerator<'a> {
         if path.len() == 1 {
             child_mod
                 .types
-                .insert(ty.path().clone(), TypeDefGen { ty, type_gen: self });
+                .insert(ty.path().clone(), TypeDefGen::from_type(ty, self));
         } else {
             self.insert_type(ty, id, path[1..].to_vec(), root_mod_ident, child_mod)
         }
@@ -204,21 +219,31 @@ impl<'a> TypeGenerator<'a> {
         }
     }
 
-    /// Returns the derives with which all generated type will be decorated.
-    pub fn derives(&self) -> &GeneratedTypeDerives {
-        &self.derives
+    /// Returns the derives to be applied to all generated types.
+    pub fn default_derives(&self) -> &Derives {
+        self.derives.default_derives()
+    }
+
+    /// Returns the derives to be applied to a generated type.
+    pub fn type_derives(&self, ty: &Type<PortableForm>) -> Derives {
+        let joined_path = ty.path().segments().join("::");
+        let ty_path: syn::TypePath = syn::parse_str(&joined_path).unwrap_or_else(|e| {
+            abort_call_site!("'{}' is an invalid type path: {:?}", joined_path, e,)
+        });
+        self.derives.resolve(&ty_path)
     }
 }
 
+/// Represents a Rust `mod`, containing generated types and child `mod`s.
 #[derive(Debug)]
-pub struct Module<'a> {
+pub struct Module {
     name: Ident,
     root_mod: Ident,
-    children: BTreeMap<Ident, Module<'a>>,
-    types: BTreeMap<scale_info::Path<scale_info::form::PortableForm>, TypeDefGen<'a>>,
+    children: BTreeMap<Ident, Module>,
+    types: BTreeMap<scale_info::Path<scale_info::form::PortableForm>, TypeDefGen>,
 }
 
-impl<'a> ToTokens for Module<'a> {
+impl ToTokens for Module {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = &self.name;
         let root_mod = &self.root_mod;
@@ -236,8 +261,9 @@ impl<'a> ToTokens for Module<'a> {
     }
 }
 
-impl<'a> Module<'a> {
-    pub fn new(name: Ident, root_mod: Ident) -> Self {
+impl Module {
+    /// Create a new [`Module`], with a reference to the root `mod` for resolving type paths.
+    pub(crate) fn new(name: Ident, root_mod: Ident) -> Self {
         Self {
             name,
             root_mod,

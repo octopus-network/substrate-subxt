@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright 2019-2022 Parity Technologies (UK) Ltd.
 // This file is part of subxt.
 //
 // subxt is free software: you can redistribute it and/or modify
@@ -14,15 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with subxt.  If not, see <http://www.gnu.org/licenses/>.
 
+//! Generate code for submitting extrinsics and query storage of a Substrate runtime.
+
 mod calls;
+mod constants;
+mod errors;
 mod events;
 mod storage;
 
-use super::GeneratedTypeDerives;
+use subxt_metadata::get_metadata_per_pallet_hash;
+
+use super::DerivesRegistry;
 use crate::{
     ir,
-    struct_def::StructDef,
-    types::TypeGenerator,
+    types::{
+        CompositeDef,
+        CompositeDefFields,
+        TypeGenerator,
+    },
 };
 use codec::Decode;
 use frame_metadata::{
@@ -30,7 +39,7 @@ use frame_metadata::{
     RuntimeMetadata,
     RuntimeMetadataPrefixed,
 };
-use heck::SnakeCase as _;
+use heck::ToSnakeCase as _;
 use proc_macro2::TokenStream as TokenStream2;
 use proc_macro_error::abort_call_site;
 use quote::{
@@ -44,15 +53,12 @@ use std::{
     path,
     string::ToString,
 };
-use syn::{
-    parse_quote,
-    punctuated::Punctuated,
-};
+use syn::parse_quote;
 
 pub fn generate_runtime_api<P>(
     item_mod: syn::ItemMod,
     path: P,
-    generated_type_derives: Option<Punctuated<syn::Path, syn::Token![,]>>,
+    derives: DerivesRegistry,
 ) -> TokenStream2
 where
     P: AsRef<path::Path>,
@@ -67,11 +73,6 @@ where
 
     let metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &bytes[..])
         .unwrap_or_else(|e| abort_call_site!("Failed to decode metadata: {}", e));
-
-    let mut derives = GeneratedTypeDerives::default();
-    if let Some(user_derives) = generated_type_derives {
-        derives.append(user_derives.iter().cloned())
-    }
 
     let generator = RuntimeGenerator::new(metadata);
     generator.generate_runtime(item_mod, derives)
@@ -92,9 +93,10 @@ impl RuntimeGenerator {
     pub fn generate_runtime(
         &self,
         item_mod: syn::ItemMod,
-        derives: GeneratedTypeDerives,
+        derives: DerivesRegistry,
     ) -> TokenStream2 {
         let item_mod_ir = ir::ItemMod::from(item_mod);
+        let default_derives = derives.default_derives();
 
         // some hardcoded default type substitutes, can be overridden by user
         let mut type_substitutes = [
@@ -122,6 +124,12 @@ impl RuntimeGenerator {
                 "frame_support::traits::misc::WrapperKeepOpaque",
                 parse_quote!(::subxt::WrapperKeepOpaque),
             ),
+            // BTreeMap and BTreeSet impose an `Ord` constraint on their key types. This
+            // can cause an issue with generated code that doesn't impl `Ord` by default.
+            // Decoding them to Vec by default (KeyedVec is just an alias for Vec with
+            // suitable type params) avoids these issues.
+            ("BTreeMap", parse_quote!(::subxt::KeyedVec)),
+            ("BTreeSet", parse_quote!(::std::vec::Vec)),
         ]
         .iter()
         .map(|(path, substitute): &(&str, syn::TypePath)| {
@@ -152,9 +160,29 @@ impl RuntimeGenerator {
                 )
             })
             .collect::<Vec<_>>();
+
+        // Pallet names and their length are used to create PALLETS array.
+        // The array is used to identify the pallets composing the metadata for
+        // validation of just those pallets.
+        let pallet_names: Vec<_> = self
+            .metadata
+            .pallets
+            .iter()
+            .map(|pallet| &pallet.name)
+            .collect();
+        let pallet_names_len = pallet_names.len();
+
+        let metadata_hash = get_metadata_per_pallet_hash(&self.metadata, &pallet_names);
+
         let modules = pallets_with_mod_names.iter().map(|(pallet, mod_name)| {
             let calls = if let Some(ref calls) = pallet.calls {
-                calls::generate_calls(&type_gen, pallet, calls, types_mod_ident)
+                calls::generate_calls(
+                    &self.metadata,
+                    &type_gen,
+                    pallet,
+                    calls,
+                    types_mod_ident,
+                )
             } else {
                 quote!()
             };
@@ -166,17 +194,37 @@ impl RuntimeGenerator {
             };
 
             let storage_mod = if let Some(ref storage) = pallet.storage {
-                storage::generate_storage(&type_gen, pallet, storage, types_mod_ident)
+                storage::generate_storage(
+                    &self.metadata,
+                    &type_gen,
+                    pallet,
+                    storage,
+                    types_mod_ident,
+                )
+            } else {
+                quote!()
+            };
+
+            let constants_mod = if !pallet.constants.is_empty() {
+                constants::generate_constants(
+                    &self.metadata,
+                    &type_gen,
+                    pallet,
+                    &pallet.constants,
+                    types_mod_ident,
+                )
             } else {
                 quote!()
             };
 
             quote! {
                 pub mod #mod_name {
+                    use super::root_mod;
                     use super::#types_mod_ident;
                     #calls
                     #event
                     #storage_mod
+                    #constants_mod
                 }
             }
         });
@@ -195,103 +243,147 @@ impl RuntimeGenerator {
         });
 
         let outer_event = quote! {
-            #derives
+            #default_derives
             pub enum Event {
                 #( #outer_event_variants )*
             }
         };
 
         let mod_ident = item_mod_ir.ident;
-        let pallets_with_storage =
-            pallets_with_mod_names
-                .iter()
-                .filter_map(|(pallet, pallet_mod_name)| {
-                    pallet.storage.as_ref().map(|_| pallet_mod_name)
-                });
-        let pallets_with_calls =
-            pallets_with_mod_names
-                .iter()
-                .filter_map(|(pallet, pallet_mod_name)| {
-                    pallet.calls.as_ref().map(|_| pallet_mod_name)
-                });
+        let pallets_with_constants: Vec<_> = pallets_with_mod_names
+            .iter()
+            .filter_map(|(pallet, pallet_mod_name)| {
+                (!pallet.constants.is_empty()).then(|| pallet_mod_name)
+            })
+            .collect();
+
+        let pallets_with_storage: Vec<_> = pallets_with_mod_names
+            .iter()
+            .filter_map(|(pallet, pallet_mod_name)| {
+                pallet.storage.as_ref().map(|_| pallet_mod_name)
+            })
+            .collect();
+
+        let pallets_with_calls: Vec<_> = pallets_with_mod_names
+            .iter()
+            .filter_map(|(pallet, pallet_mod_name)| {
+                pallet.calls.as_ref().map(|_| pallet_mod_name)
+            })
+            .collect();
+
+        let has_module_error_impl =
+            errors::generate_has_module_error_impl(&self.metadata, types_mod_ident);
 
         quote! {
             #[allow(dead_code, unused_imports, non_camel_case_types)]
             pub mod #mod_ident {
+                // Make it easy to access the root via `root_mod` at different levels:
+                use super::#mod_ident as root_mod;
+                // Identify the pallets composing the static metadata by name.
+                pub static PALLETS: [&str; #pallet_names_len] = [ #(#pallet_names,)* ];
+
                 #outer_event
                 #( #modules )*
                 #types_mod
 
-                /// Default configuration of common types for a target Substrate runtime.
-                #[derive(Clone, Debug, Default, Eq, PartialEq)]
-                pub struct DefaultConfig;
+                /// The default error type returned when there is a runtime issue.
+                pub type DispatchError = #types_mod_ident::sp_runtime::DispatchError;
+                // Impl HasModuleError on DispatchError so we can pluck out module error details.
+                #has_module_error_impl
 
-                impl ::subxt::Config for DefaultConfig {
-                    type Index = u32;
-                    type BlockNumber = u32;
-                    type Hash = ::subxt::sp_core::H256;
-                    type Hashing = ::subxt::sp_runtime::traits::BlakeTwo256;
-                    type AccountId = ::subxt::sp_runtime::AccountId32;
-                    type Address = ::subxt::sp_runtime::MultiAddress<Self::AccountId, u32>;
-                    type Header = ::subxt::sp_runtime::generic::Header<
-                        Self::BlockNumber, ::subxt::sp_runtime::traits::BlakeTwo256
-                    >;
-                    type Signature = ::subxt::sp_runtime::MultiSignature;
-                    type Extrinsic = ::subxt::sp_runtime::OpaqueExtrinsic;
-                }
-
-                impl ::subxt::ExtrinsicExtraData<DefaultConfig> for DefaultConfig {
-                    type AccountData = AccountData;
-                    type Extra = ::subxt::DefaultExtra<DefaultConfig>;
-                }
-
-                pub type AccountData = self::system::storage::Account;
-
-                impl ::subxt::AccountData<DefaultConfig> for AccountData {
-                    fn nonce(result: &<Self as ::subxt::StorageEntry>::Value) -> <DefaultConfig as ::subxt::Config>::Index {
-                        result.nonce
-                    }
-                    fn storage_entry(account_id: <DefaultConfig as ::subxt::Config>::AccountId) -> Self {
-                        Self(account_id)
-                    }
-                }
-
-                pub struct RuntimeApi<T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>> {
+                pub struct RuntimeApi<T: ::subxt::Config, X> {
                     pub client: ::subxt::Client<T>,
+                    marker: ::core::marker::PhantomData<X>,
                 }
 
-                impl<T> ::core::convert::From<::subxt::Client<T>> for RuntimeApi<T>
+                impl<T: ::subxt::Config, X> Clone for RuntimeApi<T, X> {
+                    fn clone(&self) -> Self {
+                        Self { client: self.client.clone(), marker: ::core::marker::PhantomData }
+                    }
+                }
+
+                impl<T, X> ::core::convert::From<::subxt::Client<T>> for RuntimeApi<T, X>
                 where
-                    T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>,
+                    T: ::subxt::Config,
+                    X: ::subxt::extrinsic::ExtrinsicParams<T>
                 {
                     fn from(client: ::subxt::Client<T>) -> Self {
-                        Self { client }
+                        Self { client, marker: ::core::marker::PhantomData }
                     }
                 }
 
-                impl<'a, T> RuntimeApi<T>
+                impl<'a, T, X> RuntimeApi<T, X>
                 where
-                    T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>,
+                    T: ::subxt::Config,
+                    X: ::subxt::extrinsic::ExtrinsicParams<T>,
                 {
+                    pub fn validate_metadata(&'a self) -> Result<(), ::subxt::MetadataError> {
+                        let runtime_metadata_hash = {
+                            let locked_metadata = self.client.metadata();
+                            let metadata = locked_metadata.read();
+                            metadata.metadata_hash(&PALLETS)
+                        };
+                        if runtime_metadata_hash != [ #(#metadata_hash,)* ] {
+                            Err(::subxt::MetadataError::IncompatibleMetadata)
+                        } else {
+                            Ok(())
+                        }
+                    }
+
+                    pub fn constants(&'a self) -> ConstantsApi<'a, T> {
+                        ConstantsApi { client: &self.client }
+                    }
+
                     pub fn storage(&'a self) -> StorageApi<'a, T> {
                         StorageApi { client: &self.client }
                     }
 
-                    pub fn tx(&'a self) -> TransactionApi<'a, T> {
-                        TransactionApi { client: &self.client }
+                    pub fn tx(&'a self) -> TransactionApi<'a, T, X> {
+                        TransactionApi { client: &self.client, marker: ::core::marker::PhantomData }
+                    }
+
+                    pub fn events(&'a self) -> EventsApi<'a, T> {
+                        EventsApi { client: &self.client }
                     }
                 }
 
-                pub struct StorageApi<'a, T>
-                where
-                    T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>,
-                {
+                pub struct EventsApi<'a, T: ::subxt::Config> {
+                    client: &'a ::subxt::Client<T>,
+                }
+
+                impl <'a, T: ::subxt::Config> EventsApi<'a, T> {
+                    pub async fn at(&self, block_hash: T::Hash) -> Result<::subxt::events::Events<T, Event>, ::subxt::BasicError> {
+                        ::subxt::events::at::<T, Event>(self.client, block_hash).await
+                    }
+
+                    pub async fn subscribe(&self) -> Result<::subxt::events::EventSubscription<'a, ::subxt::events::EventSub<T::Header>, T, Event>, ::subxt::BasicError> {
+                        ::subxt::events::subscribe::<T, Event>(self.client).await
+                    }
+
+                    pub async fn subscribe_finalized(&self) -> Result<::subxt::events::EventSubscription<'a, ::subxt::events::FinalizedEventSub<'a, T::Header>, T, Event>, ::subxt::BasicError> {
+                        ::subxt::events::subscribe_finalized::<T, Event>(self.client).await
+                    }
+                }
+
+                pub struct ConstantsApi<'a, T: ::subxt::Config> {
+                    client: &'a ::subxt::Client<T>,
+                }
+
+                impl<'a, T: ::subxt::Config> ConstantsApi<'a, T> {
+                    #(
+                        pub fn #pallets_with_constants(&self) -> #pallets_with_constants::constants::ConstantsApi<'a, T> {
+                            #pallets_with_constants::constants::ConstantsApi::new(self.client)
+                        }
+                    )*
+                }
+
+                pub struct StorageApi<'a, T: ::subxt::Config> {
                     client: &'a ::subxt::Client<T>,
                 }
 
                 impl<'a, T> StorageApi<'a, T>
                 where
-                    T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>,
+                    T: ::subxt::Config,
                 {
                     #(
                         pub fn #pallets_with_storage(&self) -> #pallets_with_storage::storage::StorageApi<'a, T> {
@@ -300,16 +392,18 @@ impl RuntimeGenerator {
                     )*
                 }
 
-                pub struct TransactionApi<'a, T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>> {
+                pub struct TransactionApi<'a, T: ::subxt::Config, X> {
                     client: &'a ::subxt::Client<T>,
+                    marker: ::core::marker::PhantomData<X>,
                 }
 
-                impl<'a, T> TransactionApi<'a, T>
+                impl<'a, T, X> TransactionApi<'a, T, X>
                 where
-                    T: ::subxt::Config + ::subxt::ExtrinsicExtraData<T>,
+                    T: ::subxt::Config,
+                    X: ::subxt::extrinsic::ExtrinsicParams<T>,
                 {
                     #(
-                        pub fn #pallets_with_calls(&self) -> #pallets_with_calls::calls::TransactionApi<'a, T> {
+                        pub fn #pallets_with_calls(&self) -> #pallets_with_calls::calls::TransactionApi<'a, T, X> {
                             #pallets_with_calls::calls::TransactionApi::new(self.client)
                         }
                     )*
@@ -319,23 +413,39 @@ impl RuntimeGenerator {
     }
 }
 
-pub fn generate_structs_from_variants(
-    type_gen: &TypeGenerator,
+/// Return a vector of tuples of variant names and corresponding struct definitions.
+pub fn generate_structs_from_variants<'a, F>(
+    type_gen: &'a TypeGenerator,
     type_id: u32,
+    variant_to_struct_name: F,
     error_message_type_name: &str,
-) -> Vec<StructDef> {
+) -> Vec<(String, CompositeDef)>
+where
+    F: Fn(&str) -> std::borrow::Cow<str>,
+{
     let ty = type_gen.resolve_type(type_id);
     if let scale_info::TypeDef::Variant(variant) = ty.type_def() {
         variant
             .variants()
             .iter()
             .map(|var| {
-                StructDef::new(
-                    var.name(),
+                let struct_name = variant_to_struct_name(var.name());
+                let fields = CompositeDefFields::from_scale_info_fields(
+                    struct_name.as_ref(),
                     var.fields(),
-                    Some(syn::parse_quote!(pub)),
+                    &[],
                     type_gen,
-                )
+                );
+                let struct_def = CompositeDef::struct_def(
+                    &ty,
+                    struct_name.as_ref(),
+                    Default::default(),
+                    fields,
+                    Some(parse_quote!(pub)),
+                    type_gen,
+                    var.docs(),
+                );
+                (var.name().to_string(), struct_def)
             })
             .collect()
     } else {

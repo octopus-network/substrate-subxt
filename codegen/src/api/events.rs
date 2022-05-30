@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Parity Technologies (UK) Ltd.
+// Copyright 2019-2022 Parity Technologies (UK) Ltd.
 // This file is part of subxt.
 //
 // subxt is free software: you can redistribute it and/or modify
@@ -29,12 +29,16 @@ pub fn generate_events(
     event: &PalletEventMetadata<PortableForm>,
     types_mod_ident: &syn::Ident,
 ) -> TokenStream2 {
-    let struct_defs =
-        super::generate_structs_from_variants(type_gen, event.ty.id(), "Event");
-    let event_structs = struct_defs.iter().map(|struct_def| {
+    let struct_defs = super::generate_structs_from_variants(
+        type_gen,
+        event.ty.id(),
+        |name| name.into(),
+        "Event",
+    );
+    let event_structs = struct_defs.iter().map(|(variant_name, struct_def)| {
         let pallet_name = &pallet.name;
         let event_struct = &struct_def.name;
-        let event_name = struct_def.name.to_string();
+        let event_name = variant_name;
 
         quote! {
             #struct_def
