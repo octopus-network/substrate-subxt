@@ -18,6 +18,6 @@ proc-macro = true
 [dependencies]
 darling = "0.14.0"
 proc-macro-error = "1.0.4"
-syn = "1.0.58"
+syn = "2.0.16"
 
 subxt-codegen = { path = "../codegen", version = "0.25.0" }
